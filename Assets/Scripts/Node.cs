@@ -6,7 +6,10 @@ using UnityEngine;
 public enum NodeType
 {
     Open = 0,
-    Blocked = 1
+    Blocked = 1,
+    LightTerrain = 2,
+    MediumTerrain = 3,
+    HeavyTerrain = 4,
 }
 public class Node: IComparable<Node>
 {
@@ -20,7 +23,7 @@ public class Node: IComparable<Node>
     public float distanceTraveled = Mathf.Infinity;
     public Node previous = null;
 
-    public int priority;
+    public float priority;
     public Node(int xIndex, int yIndex, NodeType nodeType)
     {
         this.xIndex = xIndex;

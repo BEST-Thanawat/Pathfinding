@@ -11,7 +11,7 @@ public class Pathfinder : MonoBehaviour
     Graph m_graph;
     GraphView m_graphView;
 
-    Queue<Node> m_frontierNodes;
+    PriorityQueue<Node> m_frontierNodes;
     List<Node> m_exploreNodes;
     List<Node> m_pathNodes;
 
@@ -34,7 +34,9 @@ public class Pathfinder : MonoBehaviour
     public enum Mode
     {
         BFS = 0,
-        Dijkstra = 1
+        Dijkstra = 1,
+        GBFS = 2,
+        AStar = 3
     }
     public Mode mode = Mode.BFS;
 
@@ -58,7 +60,7 @@ public class Pathfinder : MonoBehaviour
         m_goalNode = goal;
         ShowColors(graphView, start, goal);
 
-        m_frontierNodes = new Queue<Node>();
+        m_frontierNodes = new PriorityQueue<Node>();
         m_frontierNodes.Enqueue(start);
         m_exploreNodes = new List<Node>();
         m_pathNodes = new List<Node>();
@@ -76,28 +78,28 @@ public class Pathfinder : MonoBehaviour
         m_startNode.distanceTraveled = 0;
     }
 
-    void ShowColor()
+    void ShowColor(bool lerpColor = false, float lerpValue = 0.5f)
     {
-        ShowColors(m_graphView, m_startNode, m_goalNode);
+        ShowColors(m_graphView, m_startNode, m_goalNode, lerpColor, lerpValue);
     }
 
-    private void ShowColors(GraphView graphView, Node start, Node goal)
+    private void ShowColors(GraphView graphView, Node start, Node goal, bool lerpColor = false, float lerpValue = 0.5f)
     {
         if (graphView == null || start == null || goal == null) return;
 
         if(m_frontierNodes != null)
         {
-            graphView.ColorNodes(m_frontierNodes.ToList(), frontierColor);
+            graphView.ColorNodes(m_frontierNodes.ToList(), frontierColor, lerpColor, lerpValue);
         }
 
         if(m_exploreNodes != null)
         {
-            graphView.ColorNodes(m_exploreNodes, exploredColor);
+            graphView.ColorNodes(m_exploreNodes, exploredColor, lerpColor, lerpValue);
         }
 
         if(m_pathNodes != null && m_pathNodes.Count > 0)
         {
-            graphView.ColorNodes(m_pathNodes, pathColor);
+            graphView.ColorNodes(m_pathNodes, pathColor, lerpColor, lerpValue * 2f);
         }
 
         NodeView startNodeView = graphView.nodeViews[start.xIndex, start.yIndex];
@@ -115,7 +117,7 @@ public class Pathfinder : MonoBehaviour
 
     public IEnumerator SearchRoutine(float timeStep = 0.1f)
     {
-        float timeStart = Time.time;
+        float timeStart = Time.realtimeSinceStartup;
         yield return null;
 
         while (!isComplete)
@@ -138,6 +140,14 @@ public class Pathfinder : MonoBehaviour
                 {
                     ExpandFrontierDijkstra(currentNode);
                 }
+                else if(mode == Mode.GBFS)
+                {
+                    ExpandFrontierGreedyBreadthFirst(currentNode);
+                }
+                else if (mode == Mode.AStar)
+                {
+                    ExpandFrontierAStar(currentNode);
+                }
 
                 if (m_frontierNodes.Contains(m_goalNode))
                 {
@@ -152,7 +162,7 @@ public class Pathfinder : MonoBehaviour
 
                 if (showIterations)
                 {
-                    ShowDiagnostics();
+                    ShowDiagnostics(true, 0.5f);
                     yield return new WaitForSeconds(timeStep);
                 }
             }
@@ -162,15 +172,15 @@ public class Pathfinder : MonoBehaviour
             }
         }
 
-        ShowDiagnostics();
-        Debug.Log("PATHFINDER SearchRoutine: elapse time = " + (Time.time - timeStart).ToString() + " seconds");
+        ShowDiagnostics(true, 0.5f);
+        Debug.Log("PATHFINDER SearchRoutine: elapse time = " + (Time.realtimeSinceStartup - timeStart).ToString() + " seconds");
     }
 
-    private void ShowDiagnostics()
+    private void ShowDiagnostics(bool lerpColor = false, float lerpValue = 0.5f)
     {
         if (showColors)
         {
-            ShowColor();
+            ShowColor(lerpColor, lerpValue);
         }
 
         if (m_graphView != null && showArrows)
@@ -193,10 +203,12 @@ public class Pathfinder : MonoBehaviour
                 if (!m_exploreNodes.Contains(node.neighbors[i]) && !m_frontierNodes.Contains(node.neighbors[i]))
                 {
                     float distanceToNeighbor = m_graph.GetNodeDistance(node, node.neighbors[i]);
-                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled;
+                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled + (int)node.nodeType;
                     node.neighbors[i].distanceTraveled = newDistanceTraveled;
 
                     node.neighbors[i].previous = node;
+                    node.neighbors[i].priority = m_exploreNodes.Count;
+
                     m_frontierNodes.Enqueue(node.neighbors[i]);
                 }
             }
@@ -212,9 +224,9 @@ public class Pathfinder : MonoBehaviour
                 if (!m_exploreNodes.Contains(node.neighbors[i]))
                 {
                     float distanceToNeighbor = m_graph.GetNodeDistance(node, node.neighbors[i]);
-                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled;
+                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled + (int)node.nodeType;
 
-                    if(float.IsPositiveInfinity(node.neighbors[i].distanceTraveled) || newDistanceTraveled < node.neighbors[i].distanceTraveled)
+                    if (float.IsPositiveInfinity(node.neighbors[i].distanceTraveled) || newDistanceTraveled < node.neighbors[i].distanceTraveled)
                     {
                         node.neighbors[i].previous = node;
                         node.neighbors[i].distanceTraveled = newDistanceTraveled;
@@ -222,6 +234,60 @@ public class Pathfinder : MonoBehaviour
 
                     if (!m_frontierNodes.Contains(node.neighbors[i]))
                     {
+                        node.neighbors[i].priority = node.neighbors[i].distanceTraveled;
+                        m_frontierNodes.Enqueue(node.neighbors[i]);
+                    }
+                }
+            }
+        }
+    }
+
+    void ExpandFrontierGreedyBreadthFirst(Node node)
+    {
+        if (node != null)
+        {
+            for (int i = 0; i < node.neighbors.Count; i++)
+            {
+                if (!m_exploreNodes.Contains(node.neighbors[i]) && !m_frontierNodes.Contains(node.neighbors[i]))
+                {
+                    float distanceToNeighbor = m_graph.GetNodeDistance(node, node.neighbors[i]);
+                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled + (int)node.nodeType;
+                    node.neighbors[i].distanceTraveled = newDistanceTraveled;
+
+                    node.neighbors[i].previous = node;
+                    if(m_graph != null)
+                    {
+                        node.neighbors[i].priority = m_graph.GetNodeDistance(node.neighbors[i], m_goalNode);
+                    }
+                    
+
+                    m_frontierNodes.Enqueue(node.neighbors[i]);
+                }
+            }
+        }
+    }
+
+    void ExpandFrontierAStar(Node node)
+    {
+        if (node != null)
+        {
+            for (int i = 0; i < node.neighbors.Count; i++)
+            {
+                if (!m_exploreNodes.Contains(node.neighbors[i]))
+                {
+                    float distanceToNeighbor = m_graph.GetNodeDistance(node, node.neighbors[i]);
+                    float newDistanceTraveled = distanceToNeighbor + node.distanceTraveled + (int)node.nodeType;
+
+                    if (float.IsPositiveInfinity(node.neighbors[i].distanceTraveled) || newDistanceTraveled < node.neighbors[i].distanceTraveled)
+                    {
+                        node.neighbors[i].previous = node;
+                        node.neighbors[i].distanceTraveled = newDistanceTraveled;
+                    }
+
+                    if (!m_frontierNodes.Contains(node.neighbors[i]) && m_graph != null)
+                    {
+                        float distanceToGoal = m_graph.GetNodeDistance(node.neighbors[i], m_goalNode);
+                        node.neighbors[i].priority = node.neighbors[i].distanceTraveled + distanceToGoal;
                         m_frontierNodes.Enqueue(node.neighbors[i]);
                     }
                 }
